@@ -30,6 +30,8 @@ type WhatsAppClient struct {
 }
 
 func (c *WhatsAppClient) Init(trelloClient *TrelloClient, store *store.RequestStore) {
+	c.trelloClient = trelloClient
+	c.store = store
 	fmt.Println("Initializing WhatsApp client")
 	dbLog := waLog.Stdout("Database", "WARN", true)
 	container, err := sqlstore.New("sqlite3", "file:"+os.Getenv("WHATSAPP_DATABASE_FILE")+"?_foreign_keys=on", dbLog)
@@ -74,6 +76,14 @@ func (c *WhatsAppClient) IsReady() bool {
 func (c *WhatsAppClient) eventHandler(event interface{}) {
 	switch evt := event.(type) {
 	case *events.Message:
+		if evt.Info.IsGroup {
+			return
+		}
+
+		if evt.Info.IsFromMe {
+			return
+		}
+
 		c.Client.MarkRead([]string{evt.Info.ID}, time.Now(), evt.Info.Chat, evt.Info.Sender)
 		hasAttachment, attachmentFile, attachmentName, err := c.getAttachment(evt)
 		if err != nil {
@@ -83,7 +93,7 @@ func (c *WhatsAppClient) eventHandler(event interface{}) {
 			}
 			return
 		}
-		state, err := c.store.GetState(*evt.Message.Chat.Id)
+		state, err := c.store.GetState(evt.Info.Sender.ToNonAD().String())
 		if err != nil {
 			var card = &trello.Card{
 				Name:    c.getUsername(evt),
@@ -101,7 +111,7 @@ func (c *WhatsAppClient) eventHandler(event interface{}) {
 				fmt.Println("Error creating card:", err)
 				c.SendText(*evt, "Deine Anfrage konnte nicht weitergeleitet werden :( Bitte versuche es später nochmal erneut.")
 			} else {
-				c.store.SetState(*evt.Message.Chat.Id, card.ID)
+				c.store.SetState(evt.Info.Sender.ToNonAD().String(), card.ID)
 				c.SendText(*evt, "Deine Anfrage wurde erfolgreich weitergeleitet. Wir kümmern uns so schnell wie möglich darum.")
 			}
 		} else {
