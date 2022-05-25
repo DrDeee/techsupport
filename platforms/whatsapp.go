@@ -85,7 +85,7 @@ func (c *WhatsAppClient) eventHandler(event interface{}) {
 		}
 
 		c.Client.MarkRead([]string{evt.Info.ID}, time.Now(), evt.Info.Chat, evt.Info.Sender)
-		hasAttachment, attachmentFile, attachmentName, err := c.getAttachment(evt)
+		hasAttachment, attachmentFile, attachmentName, attachmentMsg, err := c.getAttachment(evt)
 		if err != nil {
 			if err.Error() != "type unsupported" {
 				fmt.Println(err)
@@ -94,10 +94,16 @@ func (c *WhatsAppClient) eventHandler(event interface{}) {
 			return
 		}
 		state, err := c.store.GetState(evt.Info.Sender.ToNonAD().String())
-		if err != nil {
+		if err != nil || state == "" {
+			var desc string
+			if attachmentMsg != "" {
+				desc = attachmentMsg
+			} else {
+				desc = evt.Message.GetConversation()
+			}
 			var card = &trello.Card{
 				Name:    c.getUsername(evt),
-				Desc:    evt.Message.GetConversation(),
+				Desc:    desc,
 				IDBoard: os.Getenv("TRELLO_BOARD_ID"),
 				IDList:  c.trelloClient.Lists.New}
 			err := c.trelloClient.Client.CreateCard(card)
@@ -114,6 +120,7 @@ func (c *WhatsAppClient) eventHandler(event interface{}) {
 				c.store.SetState(evt.Info.Sender.ToNonAD().String(), card.ID)
 				c.SendText(*evt, "Deine Anfrage wurde erfolgreich weitergeleitet. Wir kümmern uns so schnell wie möglich darum.")
 			}
+
 		} else {
 			card, err := c.trelloClient.Client.GetCard(state)
 			if err != nil {
@@ -122,7 +129,7 @@ func (c *WhatsAppClient) eventHandler(event interface{}) {
 			} else {
 				msg := "**[USER]** " + evt.Message.GetConversation()
 				if hasAttachment {
-					msg += "\n\n*(Neuer Anhang)* "
+					msg += attachmentMsg + "\n\n*(Neuer Anhang)* "
 				}
 				_, err := card.AddComment(msg)
 				if err == nil && hasAttachment {
@@ -158,58 +165,61 @@ func (c *WhatsAppClient) getUsername(evt *events.Message) string {
 	}
 }
 
-func (c *WhatsAppClient) getAttachment(evt *events.Message) (bool, string, string, error) {
+func (c *WhatsAppClient) getAttachment(evt *events.Message) (bool, string, string, string, error) {
 	var msg whatsmeow.DownloadableMessage
 	var originalFileName string
-	if evt.Message.GetVideoMessage() != nil {
-		ext, err := c.getExtensionFromMimeType(evt.Message.GetVideoMessage().GetMimetype())
+	var txt string
+	if vm := evt.Message.GetVideoMessage(); vm != nil {
+		ext, err := c.getExtensionFromMimeType(vm.GetMimetype())
 		if err != nil {
-			return false, "", "", err
+			return false, "", "", "", err
 		}
 		originalFileName = "video" + ext
+		txt = vm.GetCaption()
 		msg = evt.Message.GetVideoMessage()
-	} else if evt.Message.GetAudioMessage() != nil {
-		ext, err := c.getExtensionFromMimeType(evt.Message.GetAudioMessage().GetMimetype())
+	} else if am := evt.Message.GetAudioMessage(); am != nil {
+		ext, err := c.getExtensionFromMimeType(am.GetMimetype())
 		if err != nil {
-			return false, "", "", err
+			return false, "", "", "", err
 		}
 		originalFileName = "audio" + ext
 		msg = evt.Message.GetAudioMessage()
-	} else if evt.Message.GetDocumentMessage() != nil {
-		ext, err := c.getExtensionFromMimeType(evt.Message.GetDocumentMessage().GetMimetype())
+	} else if dm := evt.Message.GetDocumentMessage(); dm != nil {
+		ext, err := c.getExtensionFromMimeType(dm.GetMimetype())
 		if err != nil {
-			return false, "", "", err
+			return false, "", "", "", err
 		}
 		originalFileName = evt.Message.GetDocumentMessage().GetFileName()
 		if originalFileName == "" {
 			originalFileName = "document" + ext
 		}
 		msg = evt.Message.GetDocumentMessage()
-	} else if evt.Message.GetImageMessage() != nil {
-		ext, err := c.getExtensionFromMimeType(evt.Message.GetImageMessage().GetMimetype())
+	} else if im := evt.Message.GetImageMessage(); im != nil {
+		ext, err := c.getExtensionFromMimeType(im.GetMimetype())
 		if err != nil {
-			return false, "", "", err
+			return false, "", "", "", err
 		}
 		originalFileName = "image" + ext
 		msg = evt.Message.GetImageMessage()
+		txt = im.GetCaption()
 	}
 	if evt.Message.GetConversation() == "" && msg == nil {
 		c.SendText(*evt, "Dieser Nachrichtentyp wird leider nicht unterstützt :(")
-		return false, "", "", fmt.Errorf("type unsupported")
+		return false, "", "", "", fmt.Errorf("type unsupported")
 	}
 
 	if msg != nil {
 		file, err := c.Client.Download(msg)
 		if err != nil {
-			return false, "", "", err
+			return false, "", "", "", err
 		}
 		fName, err := saveBytesToTempFile(file)
 		if err != nil {
-			return false, "", "", err
+			return false, "", "", "", err
 		}
-		return true, fName, originalFileName, err
+		return true, fName, originalFileName, txt, err
 	} else {
-		return false, "", "", nil
+		return false, "", "", "", nil
 	}
 }
 
