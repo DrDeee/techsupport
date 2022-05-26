@@ -2,6 +2,7 @@ package platforms
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io/ioutil"
 	"mime"
@@ -30,6 +31,12 @@ type WhatsAppClient struct {
 }
 
 func (c *WhatsAppClient) Init(trelloClient *TrelloClient, store *store.RequestStore) {
+	_, err := os.Stat("./tmp")
+	if errors.Is(err, os.ErrNotExist) {
+		fmt.Println("Creating temp folder")
+		os.Mkdir("./tmp", 0777)
+	}
+
 	c.trelloClient = trelloClient
 	c.store = store
 	fmt.Println("Initializing WhatsApp client")
@@ -224,7 +231,7 @@ func (c *WhatsAppClient) getAttachment(evt *events.Message) (bool, string, strin
 }
 
 func saveBytesToTempFile(data []byte) (string, error) {
-	tmpfile, err := ioutil.TempFile("", "msg-media")
+	tmpfile, err := ioutil.TempFile("./tmp", "msg-media")
 	if err != nil {
 		return "", err
 	}
