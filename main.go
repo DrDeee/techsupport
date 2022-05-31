@@ -19,6 +19,7 @@ func main() {
 	}
 
 	store := store.RequestStore{}
+	store.Init()
 
 	trelloClient := platforms.TrelloClient{}
 	trelloClient.Init()

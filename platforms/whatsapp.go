@@ -28,6 +28,7 @@ type WhatsAppClient struct {
 	trelloClient *TrelloClient
 	store        *store.RequestStore
 	ready        bool
+	infoChat     string
 }
 
 func (c *WhatsAppClient) Init(trelloClient *TrelloClient, store *store.RequestStore) {
@@ -73,6 +74,34 @@ func (c *WhatsAppClient) Init(trelloClient *TrelloClient, store *store.RequestSt
 			panic(err)
 		}
 		c.ready = true
+	}
+
+	if os.Getenv("INFO_ROOM") != "" {
+		c.infoChat = os.Getenv("INFO_ROOM")
+		jid, err := types.ParseJID(c.infoChat)
+		if err != nil {
+			c.infoChat = ""
+		}
+		info, err := c.Client.GetGroupInfo(jid)
+		if err != nil {
+			c.infoChat = ""
+		} else {
+			c.infoChat = info.JID.ToNonAD().String()
+		}
+	}
+
+	if c.infoChat == "" {
+		// print all joined groups
+		groups, err := c.Client.GetJoinedGroups()
+		if err != nil {
+			fmt.Println("Failed to get joined groups:", err)
+		} else {
+			fmt.Println("=== Joined groups ===")
+			for _, g := range groups {
+				fmt.Println(g.Name, g.JID.ToNonAD().String())
+			}
+		}
+
 	}
 }
 
@@ -122,9 +151,11 @@ func (c *WhatsAppClient) eventHandler(event interface{}) {
 			}
 			if err != nil {
 				fmt.Println("Error creating card:", err)
+				c.SendInfoMessage("*Fehler beim Erstellen eines Tickets :(\n\nhttps://wa.me/" + evt.Info.Chat.User)
 				c.SendText(*evt, "Deine Anfrage konnte nicht weitergeleitet werden :( Bitte versuche es später nochmal erneut.")
 			} else {
 				c.store.SetState(evt.Info.Sender.ToNonAD().String(), card.ID)
+				c.SendInfoMessage("Neues Ticket von @" + evt.Info.Chat.User + "\n\nhttps://trello.com/c/" + card.ShortLink)
 				c.SendText(*evt, "Deine Anfrage wurde erfolgreich weitergeleitet. Wir kümmern uns so schnell wie möglich darum.")
 			}
 
@@ -132,20 +163,23 @@ func (c *WhatsAppClient) eventHandler(event interface{}) {
 			card, err := c.trelloClient.Client.GetCard(state)
 			if err != nil {
 				fmt.Println("Error adding comment to card:", err)
+				c.SendInfoMessage("*Fehler beim Weiterleiten einer Nachricht*\n\nhttps://wa.me/" + evt.Info.Chat.User)
 				c.SendText(*evt, "Deine Nachricht konnte nicht weitergeleitet werden :( Bitte versuche es später nochmal erneut.")
 			} else {
 				msg := "**[USER]** " + evt.Message.GetConversation()
 				if hasAttachment {
 					msg += attachmentMsg + "\n\n*(Neuer Anhang)* "
 				}
-				_, err := card.AddComment(msg)
+				comment, err := card.AddComment(msg)
 				if err == nil && hasAttachment {
 					err = c.trelloClient.UploadTrelloAttachment(card.ID, attachmentFile, attachmentName)
 				}
 				if err != nil {
 					fmt.Println("Error adding comment to card:", err)
+					c.SendInfoMessage("*Fehler beim Weiterleiten einer Nachricht*\n\nhttps://wa.me/" + evt.Info.Chat.User)
 					c.SendText(*evt, "Deine Nachricht konnte nicht weitergeleitet werden :( Bitte versuche es später nochmal erneut.")
 				} else {
+					c.SendInfoMessage("Neue Nachricht von @" + evt.Info.Chat.User + "\n\nhttps://trello.com/c/" + comment.Data.Card.ShortLink)
 					c.SendText(*evt, "Deine Nachricht wurde deiner Anfrage hinzugefügt.")
 				}
 			}
@@ -256,6 +290,12 @@ func (c *WhatsAppClient) SendTextWithJID(chatJID string, msg string) error {
 	}
 	_, err = c.Client.SendMessage(jid.ToNonAD(), "", msgData)
 	return err
+}
+
+func (c *WhatsAppClient) SendInfoMessage(msg string) {
+	if c.infoChat != "" {
+		c.SendTextWithJID(c.infoChat, msg)
+	}
 }
 
 func (c *WhatsAppClient) getExtensionFromMimeType(mimeType string) (string, error) {
