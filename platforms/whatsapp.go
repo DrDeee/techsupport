@@ -121,7 +121,14 @@ func (c *WhatsAppClient) eventHandler(event interface{}) {
 		}
 
 		c.Client.MarkRead([]string{evt.Info.ID}, time.Now(), evt.Info.Chat, evt.Info.Sender)
-		hasAttachment, attachmentFile, attachmentName, attachmentMsg, err := c.getAttachment(evt)
+		hasAttachment, attachmentFile, attachmentName, msgContent, err := c.getAttachment(evt)
+		if msgContent == "" {
+			if evt.Message.GetConversation() != "" {
+				msgContent = evt.Message.GetConversation()
+			} else if extended := evt.Message.GetExtendedTextMessage(); extended != nil {
+				msgContent = extended.GetText()
+			}
+		}
 		if err != nil {
 			if err.Error() != "type unsupported" {
 				fmt.Println(err)
@@ -131,15 +138,9 @@ func (c *WhatsAppClient) eventHandler(event interface{}) {
 		}
 		state, err := c.store.GetState(evt.Info.Sender.ToNonAD().String())
 		if err != nil || state == "" {
-			var desc string
-			if attachmentMsg != "" {
-				desc = attachmentMsg
-			} else {
-				desc = evt.Message.GetConversation()
-			}
 			var card = &trello.Card{
 				Name:    c.getUsername(evt),
-				Desc:    desc,
+				Desc:    msgContent,
 				IDBoard: os.Getenv("TRELLO_BOARD_ID"),
 				IDList:  c.trelloClient.Lists.New}
 			err := c.trelloClient.Client.CreateCard(card)
@@ -166,9 +167,9 @@ func (c *WhatsAppClient) eventHandler(event interface{}) {
 				c.SendInfoMessage("*Fehler beim Weiterleiten einer Nachricht*\n\nhttps://wa.me/" + evt.Info.Chat.User)
 				c.SendText(*evt, "Deine Nachricht konnte nicht weitergeleitet werden :( Bitte versuche es später nochmal erneut.")
 			} else {
-				msg := "**[USER]** " + evt.Message.GetConversation()
+				msg := "**[USER]** " + msgContent
 				if hasAttachment {
-					msg += attachmentMsg + "\n\n*(Neuer Anhang)* "
+					msg += msgContent + "\n\n*(Neuer Anhang)* "
 				}
 				comment, err := card.AddComment(msg)
 				if err == nil && hasAttachment {
@@ -244,7 +245,7 @@ func (c *WhatsAppClient) getAttachment(evt *events.Message) (bool, string, strin
 		msg = evt.Message.GetImageMessage()
 		txt = im.GetCaption()
 	}
-	if evt.Message.GetConversation() == "" && msg == nil {
+	if evt.Message.GetConversation() == "" && msg == nil && evt.Message.GetExtendedTextMessage() == nil {
 		c.SendText(*evt, "Dieser Nachrichtentyp wird leider nicht unterstützt :(")
 		return false, "", "", "", fmt.Errorf("type unsupported")
 	}
@@ -272,7 +273,6 @@ func saveBytesToTempFile(data []byte) (string, error) {
 	defer tmpfile.Close()
 
 	if _, err := tmpfile.Write(data); err != nil {
-		fmt.Println("d2")
 		return "", err
 	}
 	return tmpfile.Name(), nil
