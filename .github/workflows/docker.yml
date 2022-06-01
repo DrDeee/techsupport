@@ -2,6 +2,9 @@ name: Docker Build
 
 on:
   push:
+    branches:
+      - tickets
+      - bridge
   workflow_dispatch:
 
 jobs:
